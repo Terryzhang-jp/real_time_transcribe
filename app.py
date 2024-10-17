@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from faster_whisper import WhisperModel
+from googletrans import Translator
 import tempfile
 import os
 import subprocess
@@ -11,6 +12,9 @@ logging.basicConfig(level=logging.DEBUG)
 
 # 加载 Faster Whisper 模型
 model = WhisperModel("medium", device="cpu", compute_type="int8")
+
+# 初始化 Google Translator
+translator = Translator()
 
 # 保存最后一段音频的转写结果
 last_transcription = ""
@@ -77,9 +81,16 @@ def transcribe():
         # 更新上下文
         last_transcription = transcription[-100:]  # 保留最后100个字符作为上下文
 
-        return jsonify({'transcription': transcription})
+        # 翻译转写结果为中文
+        if language != 'zh':
+            translation = translator.translate(transcription, dest='zh-cn').text
+            app.logger.info(f"Translation result: {translation}")
+        else:
+            translation = transcription
+
+        return jsonify({'transcription': transcription, 'translation': translation})
     except Exception as e:
-        app.logger.error(f"Error during transcription: {str(e)}")
+        app.logger.error(f"Error during transcription or translation: {str(e)}")
         return jsonify({'error': str(e)}), 500
     finally:
         if os.path.exists(temp_audio_path):
