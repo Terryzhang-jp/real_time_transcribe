@@ -28,6 +28,7 @@ def transcribe():
         return jsonify({'error': 'No audio file'}), 400
 
     audio_file = request.files['audio']
+    language = request.form.get('language', 'zh')  # 默认为中文
     
     temp_audio_path = ''
     wav_path = ''
@@ -39,6 +40,7 @@ def transcribe():
 
         app.logger.info(f"Audio file saved to {temp_audio_path}")
         app.logger.info(f"Audio file size: {os.path.getsize(temp_audio_path)} bytes")
+        app.logger.info(f"Selected language: {language}")
         
         # 添加这些行来查看文件的前100个字节
         with open(temp_audio_path, 'rb') as f:
@@ -66,8 +68,8 @@ def transcribe():
 
         app.logger.info(f"Audio converted to WAV: {wav_path}")
 
-        # 使用上下文进行转写
-        segments, _ = model.transcribe(wav_path, language="zh", beam_size=5, initial_prompt=last_transcription)
+        # 使用上下文进行转写，并传入选择的语言
+        segments, _ = model.transcribe(wav_path, language=language, beam_size=5, initial_prompt=last_transcription)
         transcription = " ".join([segment.text for segment in segments])
 
         app.logger.info(f"Transcription result: {transcription}")
