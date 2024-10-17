@@ -24,8 +24,10 @@
     <p id="status">未检测到人声</p>
     <p id="frequency">主要频率: - Hz</p>
     <p id="continuity">语音连续性: -</p>
+    <p id="volume">当前音量: - dB</p>
     <canvas id="frequencyVisualizer" width="400" height="200"></canvas>
     <canvas id="continuityVisualizer" width="400" height="100"></canvas>
+    <canvas id="volumeVisualizer" width="400" height="100"></canvas>
     <div id="transcription"></div>
 
     <script>
@@ -38,12 +40,15 @@
         const status = document.getElementById('status');
         const frequencyDisplay = document.getElementById('frequency');
         const continuityDisplay = document.getElementById('continuity');
+        const volumeDisplay = document.getElementById('volume');
         const frequencyCanvas = document.getElementById('frequencyVisualizer');
         const frequencyCtx = frequencyCanvas.getContext('2d');
         const continuityCanvas = document.getElementById('continuityVisualizer');
         const continuityCtx = continuityCanvas.getContext('2d');
+        const volumeCanvas = document.getElementById('volumeVisualizer');
+        const volumeCtx = volumeCanvas.getContext('2d');
 
-        const VOLUME_THRESHOLD = -50; // 音量阈值，单位为dB
+        const VOLUME_THRESHOLD = -50; // 降低音量阈值，单位为dB
         const MIN_HUMAN_FREQ = 85;
         const MAX_HUMAN_FREQ = 255;
         const CONTINUITY_THRESHOLD = 500; // 连续性阈值，单位为毫秒
@@ -92,6 +97,7 @@
             status.textContent = '未检测到人声';
             frequencyDisplay.textContent = '主要频率: - Hz';
             continuityDisplay.textContent = '语音连续性: -';
+            volumeDisplay.textContent = '当前音量: - dB';
         };
 
         function startRecording() {
@@ -141,6 +147,13 @@
 
             // 可视化频率数据
             visualizeFrequency(dataArray);
+            visualizeVolume(volumeDB);
+
+            // 更新音量显示
+            volumeDisplay.textContent = `当前音量: ${volumeDB.toFixed(2)} dB`;
+
+            // 输出调试信息到控制台
+            console.log(`Current volume: ${volumeDB.toFixed(2)} dB`);
 
             if (volumeDB > VOLUME_THRESHOLD) {
                 status.textContent = '检测到人声';
@@ -208,6 +221,13 @@
                 const barHeight = continuityBuffer[i] * continuityCanvas.height;
                 continuityCtx.fillRect(i * barWidth, continuityCanvas.height - barHeight, barWidth, barHeight);
             }
+        }
+
+        function visualizeVolume(volume) {
+            volumeCtx.clearRect(0, 0, volumeCanvas.width, volumeCanvas.height);
+            volumeCtx.fillStyle = 'rgb(0, 255, 0)';
+            const height = (volume + 140) * volumeCanvas.height / 140;
+            volumeCtx.fillRect(0, volumeCanvas.height - height, volumeCanvas.width, height);
         }
 
         function sendAudioToServer() {

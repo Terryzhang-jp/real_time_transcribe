@@ -12,12 +12,16 @@ logging.basicConfig(level=logging.DEBUG)
 # 加载 Faster Whisper 模型
 model = WhisperModel("medium", device="cpu", compute_type="int8")
 
+# 保存最后一段音频的转写结果
+last_transcription = ""
+
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
+    global last_transcription
     app.logger.info("Transcribe route called")
     if 'audio' not in request.files:
         app.logger.error("No audio file in request")
@@ -62,10 +66,14 @@ def transcribe():
 
         app.logger.info(f"Audio converted to WAV: {wav_path}")
 
-        segments, _ = model.transcribe(wav_path, language="zh", beam_size=5)
+        # 使用上下文进行转写
+        segments, _ = model.transcribe(wav_path, language="zh", beam_size=5, initial_prompt=last_transcription)
         transcription = " ".join([segment.text for segment in segments])
 
         app.logger.info(f"Transcription result: {transcription}")
+
+        # 更新上下文
+        last_transcription = transcription[-100:]  # 保留最后100个字符作为上下文
 
         return jsonify({'transcription': transcription})
     except Exception as e:
