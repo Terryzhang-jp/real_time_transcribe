@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时语音转写</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+            margin-top: 10px;
+        }
+        #transcription {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            min-height: 100px;
+        }
+    </style>
+</head>
+<body>
+    <h1>实时语音转写</h1>
+    <button id="startButton">开始</button>
+    <button id="stopButton" disabled>停止</button>
+    <p id="status">未检测到人声</p>
+    <p id="frequency">主要频率: - Hz</p>
+    <p id="continuity">语音连续性: -</p>
+    <canvas id="frequencyVisualizer" width="400" height="200"></canvas>
+    <canvas id="continuityVisualizer" width="400" height="100"></canvas>
+    <div id="transcription"></div>
+
+    <script>
+        let audioContext;
+        let analyser;
+        let microphone;
+        let isListening = false;
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const status = document.getElementById('status');
+        const frequencyDisplay = document.getElementById('frequency');
+        const continuityDisplay = document.getElementById('continuity');
+        const frequencyCanvas = document.getElementById('frequencyVisualizer');
+        const frequencyCtx = frequencyCanvas.getContext('2d');
+        const continuityCanvas = document.getElementById('continuityVisualizer');
+        const continuityCtx = continuityCanvas.getContext('2d');
+
+        const VOLUME_THRESHOLD = -50; // 音量阈值，单位为dB
+        const MIN_HUMAN_FREQ = 85;
+        const MAX_HUMAN_FREQ = 255;
+        const CONTINUITY_THRESHOLD = 500; // 连续性阈值，单位为毫秒
+        let lastVoiceDetectionTime = 0;
+        let continuityBuffer = new Array(300).fill(0);
+
+        let mediaRecorder;
+        let audioChunks = [];
+        let isTranscribing = false;
+        let transcriptionBuffer = '';
+
+        startButton.onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            microphone = audioContext.createMediaStreamSource(stream);
+
+            analyser.fftSize = 2048;
+            analyser.smoothingTimeConstant = 0.8;
+
+            microphone.connect(analyser);
+
+            isListening = true;
+            detectSound();
+
+            startButton.disabled = true;
+            stopButton.disabled = false;
+
+            // 开始录音，使用VP8编解码器
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' });
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+            mediaRecorder.onstop = () => {
+                sendAudioToServer();
+            };
+            mediaRecorder.start(1000); // 每秒发送一次数据
+        };
+
+        stopButton.onclick = () => {
+            isListening = false;
+            if (audioContext) {
+                audioContext.close();
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            status.textContent = '未检测到人声';
+            frequencyDisplay.textContent = '主要频率: - Hz';
+            continuityDisplay.textContent = '语音连续性: -';
+
+            // 停止录音
+            mediaRecorder.stop();
+        };
+
+        function detectSound() {
+            if (!isListening) return;
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Float32Array(bufferLength);
+            analyser.getFloatFrequencyData(dataArray);
+
+            const nyquist = audioContext.sampleRate / 2;
+            const minIndex = Math.floor(MIN_HUMAN_FREQ * bufferLength / nyquist);
+            const maxIndex = Math.ceil(MAX_HUMAN_FREQ * bufferLength / nyquist);
+
+            let maxVolume = -Infinity;
+            let maxFrequency = 0;
+            for (let i = minIndex; i <= maxIndex; i++) {
+                if (dataArray[i] > maxVolume) {
+                    maxVolume = dataArray[i];
+                    maxFrequency = i * nyquist / bufferLength;
+                }
+            }
+
+            const volumeDB = maxVolume;
+
+            // 可视化频率数据
+            visualizeFrequency(dataArray);
+
+            if (volumeDB > VOLUME_THRESHOLD) {
+                status.textContent = '检测到人声';
+                frequencyDisplay.textContent = `主要频率: ${maxFrequency.toFixed(2)} Hz`;
+                
+                const now = performance.now();
+                const timeSinceLastVoice = now - lastVoiceDetectionTime;
+                lastVoiceDetectionTime = now;
+
+                if (timeSinceLastVoice < CONTINUITY_THRESHOLD) {
+                    continuityDisplay.textContent = '语音连续性: 连续';
+                    continuityBuffer.push(1);
+                } else {
+                    continuityDisplay.textContent = '语音连续性: 断续';
+                    continuityBuffer.push(0);
+                }
+            } else {
+                status.textContent = '未检测到人声';
+                frequencyDisplay.textContent = '主要频率: - Hz';
+                continuityDisplay.textContent = '语音连续性: -';
+                continuityBuffer.push(0);
+            }
+
+            continuityBuffer.shift();
+            visualizeContinuity();
+
+            requestAnimationFrame(detectSound);
+        }
+
+        function visualizeFrequency(dataArray) {
+            frequencyCtx.fillStyle = 'rgb(200, 200, 200)';
+            frequencyCtx.fillRect(0, 0, frequencyCanvas.width, frequencyCanvas.height);
+            frequencyCtx.lineWidth = 2;
+            frequencyCtx.strokeStyle = 'rgb(0, 0, 0)';
+            frequencyCtx.beginPath();
+
+            const sliceWidth = frequencyCanvas.width * 1.0 / dataArray.length;
+            let x = 0;
+
+            for (let i = 0; i < dataArray.length; i++) {
+                const v = (dataArray[i] + 140) / 140;  // normalize
+                const y = v * frequencyCanvas.height / 2;
+
+                if (i === 0) {
+                    frequencyCtx.moveTo(x, y);
+                } else {
+                    frequencyCtx.lineTo(x, y);
+                }
+
+                x += sliceWidth;
+            }
+
+            frequencyCtx.lineTo(frequencyCanvas.width, frequencyCanvas.height / 2);
+            frequencyCtx.stroke();
+        }
+
+        function visualizeContinuity() {
+            continuityCtx.fillStyle = 'rgb(200, 200, 200)';
+            continuityCtx.fillRect(0, 0, continuityCanvas.width, continuityCanvas.height);
+            
+            const barWidth = continuityCanvas.width / continuityBuffer.length;
+            continuityCtx.fillStyle = 'rgb(0, 0, 0)';
+            
+            for (let i = 0; i < continuityBuffer.length; i++) {
+                const barHeight = continuityBuffer[i] * continuityCanvas.height;
+                continuityCtx.fillRect(i * barWidth, continuityCanvas.height - barHeight, barWidth, barHeight);
+            }
+        }
+
+        function sendAudioToServer() {
+            if (isTranscribing) return;
+            isTranscribing = true;
+
+            const audioBlob = new Blob(audioChunks, { type: 'video/webm;codecs=vp8,opus' });
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+
+            fetch('/transcribe', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.transcription) {
+                    transcriptionBuffer += data.transcription + ' ';
+                    document.getElementById('transcription').textContent = transcriptionBuffer;
+                }
+                audioChunks = [];
+                isTranscribing = false;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                isTranscribing = false;
+            });
+        }
+    </script>
+</body>
+</html>
