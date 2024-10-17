@@ -54,9 +54,10 @@
         let audioChunks = [];
         let isTranscribing = false;
         let transcriptionBuffer = '';
+        let stream;
 
         startButton.onclick = async () => {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioContext.createAnalyser();
             microphone = audioContext.createMediaStreamSource(stream);
@@ -72,15 +73,7 @@
             startButton.disabled = true;
             stopButton.disabled = false;
 
-            // 开始录音，使用VP8编解码器
-            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' });
-            mediaRecorder.ondataavailable = (event) => {
-                audioChunks.push(event.data);
-            };
-            mediaRecorder.onstop = () => {
-                sendAudioToServer();
-            };
-            mediaRecorder.start(1000); // 每秒发送一次数据
+            startRecording();
         };
 
         stopButton.onclick = () => {
@@ -88,15 +81,41 @@
             if (audioContext) {
                 audioContext.close();
             }
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
             startButton.disabled = false;
             stopButton.disabled = true;
             status.textContent = '未检测到人声';
             frequencyDisplay.textContent = '主要频率: - Hz';
             continuityDisplay.textContent = '语音连续性: -';
-
-            // 停止录音
-            mediaRecorder.stop();
         };
+
+        function startRecording() {
+            audioChunks = [];
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                sendAudioToServer();
+                if (isListening) {
+                    setTimeout(startRecording, 100); // 100ms后重新开始录音
+                }
+            };
+
+            mediaRecorder.start();
+            setTimeout(() => {
+                if (mediaRecorder.state === "recording") {
+                    mediaRecorder.stop();
+                }
+            }, 5000); // 每5秒停止一次录音
+        }
 
         function detectSound() {
             if (!isListening) return;
@@ -192,10 +211,10 @@
         }
 
         function sendAudioToServer() {
-            if (isTranscribing) return;
+            if (isTranscribing || audioChunks.length === 0) return;
             isTranscribing = true;
 
-            const audioBlob = new Blob(audioChunks, { type: 'video/webm;codecs=vp8,opus' });
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
 
@@ -209,7 +228,6 @@
                     transcriptionBuffer += data.transcription + ' ';
                     document.getElementById('transcription').textContent = transcriptionBuffer;
                 }
-                audioChunks = [];
                 isTranscribing = false;
             })
             .catch(error => {
