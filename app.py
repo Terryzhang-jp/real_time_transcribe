@@ -1,11 +1,15 @@
 from flask import Flask, render_template, request, jsonify
 from faster_whisper import WhisperModel
-from googletrans import Translator
+from deep_translator import GoogleTranslator
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema import StrOutputParser
 import tempfile
 import os
 import subprocess
 import logging
 import base64
+import time
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -14,10 +18,21 @@ logging.basicConfig(level=logging.DEBUG)
 model = WhisperModel("medium", device="cpu", compute_type="int8")
 
 # 初始化 Google Translator
-translator = Translator()
+translator = GoogleTranslator(source='auto', target='zh-CN')
+
+# 初始化 OpenAI Chat 模型
+chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
+
+# 创建 ChatPromptTemplate
+prompt = ChatPromptTemplate.from_template("请根据上下文修正以下文本的语法和专业词汇：\n\n{text}\n\n修正后的文本：")
+
+# 创建 RunnableSequence
+chain = prompt | chat_model | StrOutputParser()
 
 # 保存最后一段音频的转写结果
 last_transcription = ""
+full_transcription = ""
+last_correction_time = time.time()
 
 @app.route('/')
 def index():
@@ -25,7 +40,7 @@ def index():
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
-    global last_transcription
+    global last_transcription, full_transcription, last_correction_time
     app.logger.info("Transcribe route called")
     if 'audio' not in request.files:
         app.logger.error("No audio file in request")
@@ -78,17 +93,30 @@ def transcribe():
 
         app.logger.info(f"Transcription result: {transcription}")
 
-        # 更新上下文
+        # 更新上下文和完整转写
         last_transcription = transcription[-100:]  # 保留最后100个字符作为上下文
+        full_transcription += transcription + " "
 
         # 翻译转写结果为中文
         if language != 'zh':
-            translation = translator.translate(transcription, dest='zh-cn').text
+            translation = translator.translate(transcription)
             app.logger.info(f"Translation result: {translation}")
         else:
             translation = transcription
 
-        return jsonify({'transcription': transcription, 'translation': translation})
+        # 检查是否需要进行GPT-4修正
+        current_time = time.time()
+        corrected_text = ""
+        if current_time - last_correction_time >= 15:
+            corrected_text = chain.invoke({"text": full_transcription})
+            full_transcription = corrected_text  # 更新完整转写为修正后的文本
+            last_correction_time = current_time
+
+        return jsonify({
+            'transcription': transcription, 
+            'translation': translation,
+            'corrected_text': corrected_text
+        })
     except Exception as e:
         app.logger.error(f"Error during transcription or translation: {str(e)}")
         return jsonify({'error': str(e)}), 500

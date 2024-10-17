@@ -38,6 +38,8 @@
     <div id="transcription"></div>
     <h2>翻译结果（中文）：</h2>
     <div id="translation"></div>
+    <h2>GPT-4 修正结果：</h2>
+    <div id="corrected-text"></div>
 
     <script>
         let audioContext;
@@ -272,8 +274,12 @@
                     document.getElementById('transcription').textContent = transcriptionBuffer;
                 }
                 if (data.translation) {
-                    translationBuffer += data.translation + ' ';  // 累积翻译结果
+                    translationBuffer += data.translation + ' ';
                     document.getElementById('translation').textContent = translationBuffer;
+                }
+                if (data.corrected_text) {
+                    correctedTextBuffer = data.corrected_text;  // 更新为最新的修正文本
+                    document.getElementById('corrected-text').textContent = correctedTextBuffer;
                 }
                 isTranscribing = false;
             })
@@ -292,8 +298,10 @@
         function clearResults() {
             transcriptionBuffer = '';
             translationBuffer = '';
+            correctedTextBuffer = '';
             document.getElementById('transcription').textContent = '';
             document.getElementById('translation').textContent = '';
+            document.getElementById('corrected-text').textContent = '';
         }
     </script>
 </body>
