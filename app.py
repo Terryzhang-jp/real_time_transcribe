@@ -19,6 +19,9 @@ from queue import Queue
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# 在文件开头添加 GraphvizGenerator 的实例化
+graph_generator = GraphvizGenerator()
+
 class AudioQueueProcessor:
     def __init__(self):
         self.audio_queue = Queue()
@@ -158,13 +161,29 @@ class AudioQueueProcessor:
                             "text": self.current_session_text.strip()
                         })
                     
+                    # 生成并发送图表更新
+                    if graph_generator.should_update():
+                        try:
+                            graph_image = graph_generator.process_text(self.current_session_text)
+                            if graph_image:
+                                with app.app_context():
+                                    socketio.emit('graph_update', {
+                                        'image_data': graph_image,
+                                        'status': '图表已更新'
+                                    })
+                        except Exception as e:
+                            logger.error(f"Error generating graph: {str(e)}")
+                            with app.app_context():
+                                socketio.emit('graph_update', {
+                                    'error': str(e)
+                                })
+                    
                     self.current_result = {
-                        'transcription': self.last_segment_text,  # 只显示新的部分
-                        'translation': translation,               # 只显示新的部分
-                        'corrected_text': corrected_text         # 显示完整的修正文本
+                        'transcription': self.last_segment_text,
+                        'translation': translation,
+                        'corrected_text': corrected_text
                     }
                     
-                    # 立即发送新结果
                     self._emit_results(force=True)
                     
                 except Exception as e:
@@ -261,7 +280,7 @@ model = WhisperModel("medium", device="cpu", compute_type="int8")
 translator = GoogleTranslator(source='auto', target='zh-CN')
 chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.4)
 prompt = ChatPromptTemplate.from_template(
-    """请���析并修正以下完整对话内容的语法和专业词汇，保持对话的连贯性：
+    """请析并修正以下完整对话内容的语法和专业词汇，保持对话的连贯性：
 
 {text}
 

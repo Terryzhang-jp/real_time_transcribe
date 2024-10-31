@@ -274,10 +274,10 @@
 
     <div id="graph-container">
         <h2>实时逻辑流程图：</h2>
-        <img id="logic-graph" src="" alt="逻辑流程图" style="display: none;">
+        <img id="logic-graph" src="" alt="逻辑流程图" style="display: none; max-width: 100%; height: auto;">
         <div id="graph-status">等待语音输入...</div>
         <div id="graph-details">
-            上次更: <span id="last-update-time">从未更新</span><br>
+            上次更新: <span id="last-update-time">从未更新</span><br>
             当前状态: <span id="current-status">初始化</span><br>
             错误信息: <span id="error-message-graph"></span>
         </div>
@@ -710,7 +710,7 @@
             errorDiv.textContent = message;
             errorDiv.style.display = 'block';
             
-            // 3秒后自动隐藏���误信息
+            // 3秒后自动隐藏误信息
             setTimeout(() => {
                 errorDiv.style.display = 'none';
             }, 3000);
@@ -718,6 +718,7 @@
 
         // Graph updates
         socket.on('graph_update', (data) => {
+            console.log('Received graph update:', data);
             const graphImg = document.getElementById('logic-graph');
             const statusDiv = document.getElementById('graph-status');
             const currentStatus = document.getElementById('current-status');
@@ -738,10 +739,8 @@
                 statusDiv.textContent = '图表生成失败';
                 currentStatus.textContent = '生成失败';
                 errorMessage.textContent = data.error;
-                graphImg.style.display = 'none';
+                console.error('Graph generation error:', data.error);
             }
-
-            updateDebugInfo({ event: 'graph_update', data: data });
         });
 
         // Initialize Canvas sizes
