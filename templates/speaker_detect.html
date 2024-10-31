@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时说话人识别</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 800px;
+            width: 100%;
+        }
+        #currentSpeaker {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        #speakerList, #debugInfo {
+            text-align: left;
+            margin-top: 20px;
+        }
+        #startButton {
+            margin: 5px;
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+        }
+        #visualFeedback {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background-color: gray;
+            margin: 10px auto;
+        }
+        .active {
+            background-color: green;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        .speaker-item {
+            color: black;
+        }
+        .current-speaker {
+            color: red;
+            font-weight: bold;
+        }
+        #audioVisualizer {
+            width: 100%;
+            height: 100px;
+            background-color: #f0f0f0;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>实时说话人识别</h1>
+        <div id="currentSpeaker">当前无人发言</div>
+        <button id="startButton">开始检测</button>
+        <div id="visualFeedback"></div>
+        <div id="status">等待开始...</div>
+        <canvas id="audioVisualizer" width="400" height="100"></canvas>
+        <div id="speakerList">
+            <h2>发言人列表：</h2>
+            <ul id="speakerListItems"></ul>
+        </div>
+        <div id="debugInfo">
+            <h2>调试信息：</h2>
+            <pre id="debugInfoContent"></pre>
+        </div>
+        <div id="audioInfo">
+            <h2>音频信息：</h2>
+            <div id="audioInfoContent"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+    const socket = io();
+    let audioContext;
+    let microphone;
+    let scriptProcessor;
+    let isListening = false;
+    let audioDataBuffer = [];
+    let sampleRate;
+
+    async function startDetection() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            sampleRate = audioContext.sampleRate;
+            microphone = audioContext.createMediaStreamSource(stream);
+
+            scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+            microphone.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+
+            scriptProcessor.onaudioprocess = function(event) {
+                const inputBuffer = event.inputBuffer;
+                const inputData = inputBuffer.getChannelData(0);
+                audioDataBuffer = Array.from(inputData); // 直接使用当前帧的数据
+                sendAudioData(audioDataBuffer);
+                console.log(`Captured audio data of length: ${audioDataBuffer.length}`);
+            };
+
+            isListening = true;
+            updateAudioInfo('开始音频检测');
+        } catch (error) {
+            console.error('获取麦克风访问失败:', error);
+            throw new Error('无法访问麦克风。请检查浏览器设置和设备权限。');
+        }
+    }
+
+    function sendAudioData(audioData) {
+        if (audioData.length > 0) {
+            socket.emit('audio_data', {
+                audio: Array.from(audioData), // 将 Float32Array 转换为普通数组
+                sample_rate: sampleRate
+            });
+            console.log(`Sent audio data of length: ${audioData.length}`);
+            updateAudioInfo(`发送音频数据长度: ${audioData.length}`);
+        }
+    }
+
+    const startButton = document.getElementById('startButton');
+    const statusElement = document.getElementById('status');
+    const visualFeedback = document.getElementById('visualFeedback');
+    const currentSpeakerElement = document.getElementById('currentSpeaker');
+    const speakerListItems = document.getElementById('speakerListItems');
+    const debugInfoContent = document.getElementById('debugInfoContent');
+    const audioVisualizer = document.getElementById('audioVisualizer');
+    const audioVisualizerCtx = audioVisualizer.getContext('2d');
+    const speechDurationElement = document.getElementById('speechDuration');
+    const volumeLevelElement = document.getElementById('volumeLevel');
+
+    startButton.onclick = async function() {
+        if (!isListening) {
+            try {
+                await startDetection();
+                this.textContent = '停止检测';
+                statusElement.textContent = '正在检测...';
+            } catch (error) {
+                console.error('启动检测失败:', error);
+                updateAudioInfo(`错误: ${error.message}`);
+                alert(`无法启动检测: ${error.message}\n请确保您已授予麦克风访问权限，并且麦克风没有被其他应用程序占用。`);
+                statusElement.textContent = '检测失败';
+            }
+        } else {
+            stopDetection();
+            this.textContent = '开始检测';
+            statusElement.textContent = '检测已停止';
+        }
+    };
+
+    async function startDetection() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            sampleRate = audioContext.sampleRate;
+            microphone = audioContext.createMediaStreamSource(stream);
+
+            scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+            microphone.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+
+            scriptProcessor.onaudioprocess = function(event) {
+                const inputBuffer = event.inputBuffer;
+                const inputData = inputBuffer.getChannelData(0);
+                audioDataBuffer = Array.from(inputData); // 直接使用当前帧的数据
+                sendAudioData(audioDataBuffer);
+                console.log(`Captured audio data of length: ${audioDataBuffer.length}`);
+            };
+
+            isListening = true;
+            updateAudioInfo('开始音频检测');
+        } catch (error) {
+            console.error('获取麦克风访问失败:', error);
+            throw new Error('无法访问麦克风。请检查浏览器设置和设备权限。');
+        }
+    }
+
+    function stopDetection() {
+        if (microphone) {
+            microphone.disconnect();
+        }
+        if (audioContext) {
+            audioContext.close();
+        }
+        isListening = false;
+        updateAudioInfo('停止音频检测');
+    }
+
+    let lastAudioSendTime = 0;
+
+    function detectSound() {
+        if (!isListening) return;
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Float32Array(bufferLength);
+        analyser.getFloatFrequencyData(dataArray);
+
+        const volume = calculateVolume(dataArray);
+        const isSpeech = volume > VOLUME_THRESHOLD;
+
+        console.log(`Current volume: ${volume.toFixed(2)} dB, Is speech: ${isSpeech}`);
+
+        // 更新语音缓冲区
+        speechBuffer.push(isSpeech);
+        if (speechBuffer.length > SPEECH_BUFFER_SIZE) {
+            speechBuffer.shift();
+        }
+
+        // 检查是否有持续的语音
+        const continuousSpeech = speechBuffer.filter(Boolean).length >= SPEECH_BUFFER_THRESHOLD;
+
+        if (continuousSpeech) {
+            if (!speechStartTime) {
+                speechStartTime = Date.now();
+            }
+            const speechDuration = Date.now() - speechStartTime;
+            currentSpeakerElement.textContent = '正在说话...';
+
+            // 累积音频数据
+            audioDataBuffer.push(...dataArray);
+
+            // 每2秒发送一次音频数据
+            if (Date.now() - lastAudioSendTime > AUDIO_SEND_INTERVAL) {
+                sendAudioData(audioDataBuffer);
+                audioDataBuffer = []; // 清空缓冲区
+                lastAudioSendTime = Date.now();
+            }
+        } else {
+            speechStartTime = null;
+            if (currentSpeakerElement.textContent !== '当前无人发言') {
+                currentSpeakerElement.textContent = '当前无人发言';
+                sendAudioData(audioDataBuffer); // 发送最后的音频数据
+                audioDataBuffer = []; // 清空缓冲区
+            }
+        }
+
+        visualizeAudio(dataArray);
+        requestAnimationFrame(detectSound);
+    }
+
+    function calculateVolume(dataArray) {
+        const humanVoiceRange = dataArray.slice(MIN_HUMAN_FREQ, MAX_HUMAN_FREQ);
+        // 使用最大值而不是平均值
+        return Math.max(...humanVoiceRange);
+    }
+
+    function sendAudioData(audioData) {
+        if (audioData.length > 0) {
+            socket.emit('audio_data', {
+                audio: Array.from(audioData), // 将 Float32Array 转换为普通数组
+                sample_rate: sampleRate
+            });
+            console.log(`Sent audio data of length: ${audioData.length}`);
+            updateAudioInfo(`发送音频数据长度: ${audioData.length}`);
+        }
+    }
+
+    function visualizeAudio(dataArray) {
+        audioVisualizerCtx.clearRect(0, 0, audioVisualizer.width, audioVisualizer.height);
+        audioVisualizerCtx.lineWidth = 2;
+        audioVisualizerCtx.strokeStyle = 'rgb(0, 0, 0)';
+        audioVisualizerCtx.beginPath();
+
+        const sliceWidth = audioVisualizer.width * 1.0 / dataArray.length;
+        let x = 0;
+
+        for (let i = 0; i < dataArray.length; i++) {
+            const v = (dataArray[i] + 140) / 140;  // normalize
+            const y = v * audioVisualizer.height / 2;
+
+            if (i === 0) {
+                audioVisualizerCtx.moveTo(x, y);
+            } else {
+                audioVisualizerCtx.lineTo(x, y);
+            }
+
+            x += sliceWidth;
+        }
+
+        audioVisualizerCtx.lineTo(audioVisualizer.width, audioVisualizer.height / 2);
+        audioVisualizerCtx.stroke();
+    }
+
+    socket.on('update_speakers', function(data) {
+        updateSpeakerList(data.speakers, data.current_speaker);
+        updateDebugInfo(data.debug_info);
+        console.log('Received update from server:', data);
+        updateAudioInfo(`接收到服务器更新: ${JSON.stringify(data)}`);
+    });
+
+    function updateSpeakerList(speakers, currentSpeaker) {
+        if (currentSpeaker) {
+            currentSpeakerElement.textContent = `当前发言人：${currentSpeaker}`;
+            visualFeedback.classList.add('active');
+        } else {
+            currentSpeakerElement.textContent = '当前无人发言';
+            visualFeedback.classList.remove('active');
+        }
+        
+        speakerListItems.innerHTML = '';
+        speakers.forEach(speaker => {
+            const listItem = document.createElement('li');
+            listItem.textContent = speaker;
+            listItem.classList.add('speaker-item');
+            if (speaker === currentSpeaker) {
+                listItem.classList.add('current-speaker');
+            }
+            speakerListItems.appendChild(listItem);
+        });
+        updateAudioInfo(`更新说话人列表: ${speakers.join(', ')}`);
+    }
+
+    function updateDebugInfo(debugInfo) {
+        debugInfoContent.textContent = JSON.stringify(debugInfo, null, 2);
+    }
+
+    function updateAudioInfo(info) {
+        const audioInfoContent = document.getElementById('audioInfoContent');
+        const newInfo = document.createElement('div');
+        newInfo.textContent = `${new Date().toLocaleTimeString()}: ${info}`;
+        audioInfoContent.prepend(newInfo);
+        if (audioInfoContent.children.length > 10) {
+            audioInfoContent.removeChild(audioInfoContent.lastChild);
+        }
+        console.log(info); // 添加控制台日志
+    }
+    </script>
+</body>
+</html>

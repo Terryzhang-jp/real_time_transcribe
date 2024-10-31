@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>实时语音转写和翻译</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
         canvas {
             border: 1px solid black;
@@ -14,6 +15,25 @@
             padding: 10px;
             border: 1px solid #ccc;
             min-height: 100px;
+        }
+        #diagram-container {
+            margin: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            min-height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .error-message {
+            color: red;
+            text-align: center;
+        }
+        #diagram-status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
         }
     </style>
 </head>
@@ -40,6 +60,19 @@
     <div id="translation"></div>
     <h2>GPT-4 修正结果：</h2>
     <div id="corrected-text"></div>
+    <h2>实时逻辑流程图：</h2>
+    <div id="graph-container">
+        <img id="logic-graph" style="max-width: 100%; height: auto; display: none;" />
+        <div id="graph-status" style="padding: 10px; margin: 10px 0; background-color: #f5f5f5; border-radius: 4px;">
+            等待语音输入...
+        </div>
+        <!-- 添加详细状态显示 -->
+        <div id="graph-details" style="font-size: 0.9em; color: #666;">
+            上次更新: <span id="last-update-time">从未更新</span><br>
+            当前状态: <span id="current-status">初始化</span><br>
+            错误信息: <span id="error-message" style="color: red;"></span>
+        </div>
+    </div>
 
     <script>
         let audioContext;
@@ -129,7 +162,10 @@
             mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
             
             mediaRecorder.ondataavailable = (event) => {
-                audioChunks.push(event.data);
+                // 只有当音量超过噪音门限时才添加音频数据
+                if (parseFloat(volumeDisplay.textContent.split(': ')[1]) > NOISE_THRESHOLD) {
+                    audioChunks.push(event.data);
+                }
             };
 
             mediaRecorder.onstop = () => {
@@ -146,6 +182,8 @@
                 }
             }, 5000); // 每5秒停止一次录音
         }
+
+        const NOISE_THRESHOLD = -70; // 噪音门限值，单位为dB
 
         function detectSound() {
             if (!isListening) return;
@@ -173,29 +211,38 @@
             visualizeFrequency(dataArray);
             visualizeVolume(volumeDB);
 
-            // 更新音量显示
+            // 更新音��显示
             volumeDisplay.textContent = `当前音量: ${volumeDB.toFixed(2)} dB`;
 
             // 输出调试信息到控制台
-            console.log(`Current volume: ${volumeDB.toFixed(2)} dB`);
+            // console.log(`Current volume: ${volumeDB.toFixed(2)} dB`);
 
-            if (volumeDB > VOLUME_THRESHOLD) {
-                status.textContent = '检测到人声';
-                frequencyDisplay.textContent = `主要频率: ${maxFrequency.toFixed(2)} Hz`;
-                
-                const now = performance.now();
-                const timeSinceLastVoice = now - lastVoiceDetectionTime;
-                lastVoiceDetectionTime = now;
+            // 应用噪音门限
+            if (volumeDB > NOISE_THRESHOLD) {
+                if (volumeDB > VOLUME_THRESHOLD) {
+                    status.textContent = '检测到人声';
+                    frequencyDisplay.textContent = `主要频率: ${maxFrequency.toFixed(2)} Hz`;
+                    
+                    const now = performance.now();
+                    const timeSinceLastVoice = now - lastVoiceDetectionTime;
+                    lastVoiceDetectionTime = now;
 
-                if (timeSinceLastVoice < CONTINUITY_THRESHOLD) {
-                    continuityDisplay.textContent = '语音连续性: 连续';
-                    continuityBuffer.push(1);
+                    if (timeSinceLastVoice < CONTINUITY_THRESHOLD) {
+                        continuityDisplay.textContent = '语音连续性: 连续';
+                        continuityBuffer.push(1);
+                    } else {
+                        continuityDisplay.textContent = '语音连续性: 断续';
+                        continuityBuffer.push(0);
+                    }
                 } else {
-                    continuityDisplay.textContent = '语音连续性: 断续';
+                    status.textContent = '未检测到人声';
+                    frequencyDisplay.textContent = '主要频率: - Hz';
+                    continuityDisplay.textContent = '语音连续性: -';
                     continuityBuffer.push(0);
                 }
             } else {
-                status.textContent = '未检测到人声';
+                // 音量低于噪音门限，视为无声音
+                status.textContent = '静音';
                 frequencyDisplay.textContent = '主要频率: - Hz';
                 continuityDisplay.textContent = '语音连续性: -';
                 continuityBuffer.push(0);
@@ -272,6 +319,7 @@
                 if (data.transcription) {
                     transcriptionBuffer += data.transcription + ' ';
                     document.getElementById('transcription').textContent = transcriptionBuffer;
+                    sendTranscriptionUpdate();  // 添加这一行
                 }
                 if (data.translation) {
                     translationBuffer += data.translation + ' ';
@@ -289,7 +337,7 @@
             });
         }
 
-        // 新增：清除按钮和相应的函数
+        // 新增：清除按和相应的函数
         const clearButton = document.createElement('button');
         clearButton.textContent = '清除结果';
         clearButton.onclick = clearResults;
@@ -303,6 +351,91 @@
             document.getElementById('translation').textContent = '';
             document.getElementById('corrected-text').textContent = '';
         }
+
+        let socket = io();
+
+        // 添加连接状态处理
+        socket.on('connect', () => {
+            console.log('WebSocket connected');
+            document.getElementById('graph-status').textContent = '图表服务已连接';
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('WebSocket disconnected');
+            document.getElementById('graph-status').textContent = '图表服务已断开';
+        });
+
+        // 改进的图表更新处理
+        socket.on('graph_update', (data) => {
+            console.log('Received graph update:', data);
+            const graphImg = document.getElementById('logic-graph');
+            const statusDiv = document.getElementById('graph-status');
+            const currentStatus = document.getElementById('current-status');
+            const errorMessage = document.getElementById('error-message');
+            const lastUpdateTime = document.getElementById('last-update-time');
+            
+            if (data.image_data) {
+                graphImg.src = data.image_data;
+                graphImg.style.display = 'block';
+                statusDiv.textContent = '图表已更新';
+                currentStatus.textContent = '更新成功';
+                errorMessage.textContent = '';
+                lastUpdateTime.textContent = new Date().toLocaleTimeString();
+                console.log('Graph image updated successfully');
+            } else if (data.status) {
+                statusDiv.textContent = data.status;
+                currentStatus.textContent = data.status;
+                graphImg.style.display = 'none';
+            } else if (data.error) {
+                statusDiv.textContent = '图表生成失败';
+                currentStatus.textContent = '生成失败';
+                errorMessage.textContent = data.error;
+                graphImg.style.display = 'none';
+                console.error('Graph generation failed:', data.error);
+            }
+        });
+
+        // 改进的转写更新发送函数
+        function sendTranscriptionUpdate() {
+            if (transcriptionBuffer.trim()) {
+                console.log('Sending transcription update, content length:', transcriptionBuffer.length);
+                document.getElementById('graph-status').textContent = '正在发送转写内容...';
+                
+                socket.emit('transcription_update', {
+                    transcription: transcriptionBuffer
+                });
+                
+                // 添加超时检查
+                setTimeout(() => {
+                    const status = document.getElementById('graph-status').textContent;
+                    if (status === '正在发送转写内容...') {
+                        document.getElementById('graph-status').textContent = '等待服务器响应超时';
+                        console.warn('Graph generation timeout');
+                    }
+                }, 10000);
+            }
+        }
+
+        // 错误处理
+        socket.on('connect_error', (error) => {
+            console.error('WebSocket connection error:', error);
+            document.getElementById('graph-status').textContent = 'WebSocket 连接错误';
+        });
+
+        // 在转写结果更新的地方添加
+        socket.on('transcription', function(data) {
+            if (data.transcription) {
+                transcriptionBuffer += data.transcription + ' ';
+                document.getElementById('transcription').textContent = transcriptionBuffer;
+                sendTranscriptionUpdate();  // 当有新的转写结果时也触发更新
+            }
+        });
+
+        // 添加更多的状态监听
+        socket.on('graph_status', (data) => {
+            document.getElementById('current-status').textContent = data.status;
+            document.getElementById('graph-status').textContent = data.status;
+        });
     </script>
 </body>
 </html>

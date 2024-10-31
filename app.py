@@ -1,18 +1,24 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_socketio import SocketIO, emit
 from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import StrOutputParser
+from models.graph_generator import GraphvizGenerator
 import tempfile
 import os
 import subprocess
 import logging
 import base64
 import time
+import threading
+
 
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
 logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # 加载 Faster Whisper 模型
 model = WhisperModel("medium", device="cpu", compute_type="int8")
@@ -33,6 +39,84 @@ chain = prompt | chat_model | StrOutputParser()
 last_transcription = ""
 full_transcription = ""
 last_correction_time = time.time()
+
+# 初始化 GraphvizGenerator
+graph_generator = GraphvizGenerator()
+logger.info("Initialized GraphvizGenerator")
+
+# 添加一个用于存储图表的目录
+CHART_DIR = os.path.join(app.root_path, 'static', 'charts')
+os.makedirs(CHART_DIR, exist_ok=True)
+
+# 添加一个测试路由
+@app.route('/test_graph')
+def test_graph():
+    try:
+        test_text = "这是一个测试文本，用于验证图形生成功能。"
+        base64_image = graph_generator.process_text(test_text)
+        return jsonify({
+            'success': bool(base64_image),
+            'message': '图形生成成功' if base64_image else '图形生成失败'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@socketio.on('connect')
+def handle_connect():
+    logger.info("Client connected")
+    emit('connection_status', {'status': 'connected'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logger.info("Client disconnected")
+
+@socketio.on('transcription_update')
+def handle_transcription_update(data):
+    logger.info("=== Starting Graph Generation Process ===")
+    logger.info(f"Received transcription update with length: {len(data.get('transcription', ''))}")
+    transcription = data.get('transcription', '')
+    
+    if not transcription:
+        logger.warning("Empty transcription received")
+        emit('graph_status', {'status': '没有接收到转写内容'})
+        return
+    
+    logger.info(f"Processing transcription: {transcription[:100]}...")
+    emit('graph_status', {'status': '正在处理转写内容...'})
+    
+    try:
+        # 检查是否需要更新
+        if not graph_generator.should_update():
+            emit('graph_status', {
+                'status': f'等待更新周期 (还需 {int(30 - (time.time() - graph_generator.last_update_time))} 秒)'
+            })
+            return
+            
+        emit('graph_status', {'status': '正在生成图表描述...'})
+        # 生成图形
+        base64_image = graph_generator.process_text(transcription)
+        
+        if base64_image:
+            logger.info("Graph generated successfully")
+            emit('graph_update', {
+                'image_data': base64_image,
+                'status': '图表生成成功'
+            })
+        else:
+            logger.warning("No graph was generated")
+            emit('graph_update', {
+                'error': '无法生成图表，可能是内容不足或格式问题'
+            })
+            
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error generating graph: {error_msg}", exc_info=True)
+        emit('graph_update', {
+            'error': f'生成图表时出错: {error_msg}'
+        })
 
 @app.route('/')
 def index():
@@ -112,6 +196,9 @@ def transcribe():
             full_transcription = corrected_text  # 更新完整转写为修正后的文本
             last_correction_time = current_time
 
+        # 在转写完成后，发送 WebSocket 更新
+        socketio.emit('transcript_update', {'text': full_transcription})
+
         return jsonify({
             'transcription': transcription, 
             'translation': translation,
@@ -126,5 +213,9 @@ def transcribe():
         if os.path.exists(wav_path):
             os.unlink(wav_path)
 
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(app.root_path, filename)
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    socketio.run(app, debug=True)
