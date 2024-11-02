@@ -492,7 +492,10 @@
 
         // Stop recording
         stopButton.onclick = () => {
-            stopRecording();
+            socket.emit('stop_recording');  // 发送停止录音信号
+            stopDetection();
+            this.textContent = '开始检测';
+            statusElement.textContent = '等待队列处理完成...';
         };
 
         // Clear results
@@ -1111,6 +1114,25 @@
             document.getElementById('char-progress').style.width = '0%';
             // ... 现有的清除代码 ...
         }
+
+        function stopDetection() {
+            if (microphone) {
+                microphone.disconnect();
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            isListening = false;
+            updateAudioInfo('停止录音，等待队列处理完成...');
+            // 不断开WebSocket连接，继续监听结果
+        }
+
+        // 添加处理完成监听
+        socket.on('processing_complete', (data) => {
+            console.log('所有处理完成:', data);
+            document.getElementById('status').textContent = data.message;
+            updateQueueStatus(data.final_status);
+        });
     </script>
 </body>
 </html>

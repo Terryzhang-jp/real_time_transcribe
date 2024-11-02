@@ -40,7 +40,8 @@ class AudioQueueProcessor:
             'current_index': 0,    # 当前处理索引
             'queue_size': 0,       # 队列大小
             'processing': False,    # 是否正在处理
-            'total_processed': 0    # 已处理总数
+            'total_processed': 0,    # 已处理总数
+            'is_recording': True  # 新增录音状态标志
         }
 
         # 结果相关变量
@@ -255,36 +256,35 @@ class AudioQueueProcessor:
         while True:
             try:
                 if not self.audio_queue.empty():
-                    # 更新处理状态
                     self.processing_status['processing'] = True
                     self.processing_status['queue_size'] = self.audio_queue.qsize()
 
-                    # 获取音频数据
                     audio_item = self.audio_queue.get()
 
                     try:
-                        # 处理音频
                         result = self._transcribe_audio(
                             audio_item['audio_data'],
                             audio_item['metadata']
                         )
 
                         if result:
-                            # 更新处理状态
                             self.processing_status['total_processed'] += 1
                             logger.info(f"Updated total processed: {self.processing_status['total_processed']}")
 
-                            # 发送结果
                             self.current_result = result
                             self._emit_results()
 
-                            # 更新当前索引
                             self.processing_status['current_index'] += 1
 
-                            # 单独发送状态更新
                             with app.app_context():
                                 socketio.emit('status_update', self.get_status())
-                            logger.info(f"Emitted status update: {self.get_status()}")
+                                
+                                # 如果队列为空且不在录音，发送完成信号
+                                if self.audio_queue.empty() and not self.processing_status['is_recording']:
+                                    socketio.emit('processing_complete', {
+                                        'message': '所有音频处理完成',
+                                        'final_status': self.get_status()
+                                    })
 
                     except Exception as e:
                         logger.error(f"Error processing audio item: {str(e)}", exc_info=True)
@@ -385,7 +385,7 @@ def index():
 def transcribe():
     """
     处理音频转写请求的路由
-    接收音频文件并添加到处理队列
+    接收音频文件并添加到处��队列
     """
     try:
         if 'audio' not in request.files:
@@ -448,6 +448,11 @@ def serve_static(filename):
 def handle_ping():
     """处理客户端ping请求"""
     emit('pong')
+
+@socketio.on('stop_recording')
+def handle_stop_recording():
+    audio_processor.processing_status['is_recording'] = False
+    logger.info("Recording stopped, continuing to process remaining queue")
 
 # 主程序入口
 if __name__ == '__main__':
