@@ -15,6 +15,8 @@ import base64
 import time
 import threading
 from queue import Queue  # 线程安全的队列
+import torch
+from typing import Dict, Any
 
 # 初始化日志配置
 logging.basicConfig(level=logging.DEBUG)
@@ -22,6 +24,30 @@ logger = logging.getLogger(__name__)
 
 # 初始化图表生成器
 graph_generator = GraphvizGenerator()
+
+# 添加GPU检测函数
+def get_device_info() -> Dict[str, Any]:
+    """
+    检测可用的计算设备并返回相关信息
+    Returns:
+        Dict包含设备类型和详细信息
+    """
+    if torch.cuda.is_available():
+        return {
+            'device': 'cuda',
+            'device_name': torch.cuda.get_device_name(0),
+            'compute_type': 'float16',
+            'device_info': f"GPU: {torch.cuda.get_device_name(0)}",
+            'device_index': 0
+        }
+    else:
+        return {
+            'device': 'cpu',
+            'device_name': 'CPU',
+            'compute_type': 'int8',
+            'device_info': "CPU Mode",
+            'device_index': 0  # CPU模式下也设置为0
+        }
 
 class AudioQueueProcessor:
     """
@@ -64,6 +90,10 @@ class AudioQueueProcessor:
         self.text_buffer = ""  # 存储累积的文本
         self.char_count = 0    # 字符计数器
         self.CHAR_THRESHOLD = 150  # 设置字符阈值为150
+
+        # 现有的初始化代码...
+        self.device_info = get_device_info()
+        logger.info(f"Using device: {self.device_info['device_info']}")
 
     def _emit_results(self, force=False):
         """
@@ -173,6 +203,7 @@ class AudioQueueProcessor:
             # 转换音频格式
             wav_path = self._convert_audio(audio_data)
             logger.debug(f"Audio converted to WAV: {wav_path}")
+            logger.info(f"Transcribing using {self.device_info['device_info']}")
 
             # 使用Whisper模型进转写
             segments, _ = model.transcribe(
@@ -353,13 +384,21 @@ app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # 初始化必要的模型和工具
-model = WhisperModel("medium", device="cpu", compute_type="int8")  # 语音识别模型
+device_info = get_device_info()
+model = WhisperModel(
+    model_size_or_path="medium",
+    device=device_info['device'],
+    compute_type=device_info['compute_type'],
+    device_index=device_info['device_index'],  # 使用从device_info获取的device_index
+    cpu_threads=4 if device_info['device'] == 'cpu' else None,
+    num_workers=1
+)  # 语音识别模型
 translator = GoogleTranslator(source='auto', target='zh-CN')  # 翻译器
 chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.4)  # GPT模型
 
 # 设置文本修正提示模板
 prompt = ChatPromptTemplate.from_template(
-"""请析并修正以下完整对话内容的语法和专业词汇，保持对话的连贯性：
+"""请析并修正以完整对话内容的语法和专业词汇，保持对话的连贯性：
 
 {text}
 
@@ -379,13 +418,13 @@ audio_processor = AudioQueueProcessor()
 @app.route('/')
 def index():
     """主页路由"""
-    return render_template('index.html')
+    return render_template('index.html', device_info=device_info)
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
     """
     处理音频转写请求的路由
-    接收音频文件并添加到处��队列
+    接收音频文件并添加到处队列
     """
     try:
         if 'audio' not in request.files:
@@ -425,7 +464,17 @@ def transcribe():
 def handle_connect():
     """处理客户端连接事件"""
     logger.info(f"Client connected with ID: {request.sid}")
-    emit('connection_status', {'status': 'connected', 'sid': request.sid})
+    device_info = get_device_info()  # 获取最新的设备信息
+    emit('connection_status', {
+        'status': 'connected', 
+        'sid': request.sid,
+        'device_info': {
+            'device': device_info['device'],
+            'device_info': device_info['device_info'],
+            'compute_type': device_info['compute_type'],
+            'device_name': device_info['device_name']
+        }
+    })
 
 @socketio.on('disconnect')
 def handle_disconnect():

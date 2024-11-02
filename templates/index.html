@@ -227,6 +227,48 @@
             width: 0%;
             transition: width 0.3s ease-in-out;
         }
+
+        .status-container {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+        
+        .status-item {
+            margin: 5px 0;
+            font-family: monospace;
+        }
+        
+        .device-status {
+            font-weight: bold;
+        }
+
+        .status-container {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .status-item {
+            margin: 5px 0;
+            font-family: monospace;
+        }
+
+        .device-status, .model-status {
+            font-weight: bold;
+            margin-left: 8px;
+        }
+
+        .device-status.gpu {
+            color: #4CAF50;
+        }
+
+        .device-status.cpu {
+            color: #2196F3;
+        }
     </style>
 </head>
 <body>
@@ -331,6 +373,17 @@
         </div>
         <div class="progress-bar">
             <div id="process-progress" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <div class="status-container">
+        <div id="deviceInfo" class="status-item">
+            <label>计算设备:</label>
+            <span class="device-status">正在检测...</span>
+        </div>
+        <div id="modelInfo" class="status-item">
+            <label>模型配置:</label>
+            <span class="model-status">正在加载...</span>
         </div>
     </div>
 
@@ -1132,6 +1185,25 @@
             console.log('所有处理完成:', data);
             document.getElementById('status').textContent = data.message;
             updateQueueStatus(data.final_status);
+        });
+
+        socket.on('connection_status', function(data) {
+            console.log('Connected to server:', data);
+            const deviceStatus = document.querySelector('#deviceInfo .device-status');
+            const modelStatus = document.querySelector('#modelInfo .model-status');
+            
+            if (data.device_info) {
+                // 更新设备信息
+                deviceStatus.textContent = data.device_info.device_info;
+                deviceStatus.className = 'device-status ' + 
+                    (data.device_info.device === 'cuda' ? 'gpu' : 'cpu');
+                
+                // 更新模型配置信息
+                modelStatus.textContent = `计算类型: ${data.device_info.compute_type}`;
+                
+                // 添加详细信息到控制台
+                console.log('Device Info:', data.device_info);
+            }
         });
     </script>
 </body>
