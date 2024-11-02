@@ -385,14 +385,12 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # 初始化必要的模型和工具
 device_info = get_device_info()
-model = WhisperModel(
-    model_size_or_path="medium",
-    device=device_info['device'],
-    compute_type=device_info['compute_type'],
-    device_index=device_info['device_index'],  # 使用从device_info获取的device_index
-    cpu_threads=4 if device_info['device'] == 'cpu' else None,
-    num_workers=1
-)  # 语音识别模型
+
+# 简化模型初始化
+if device_info['device'] == 'cuda':
+    model = WhisperModel("medium", device="cuda", compute_type="float16")
+else:
+    model = WhisperModel("medium", device="cpu", compute_type="int8")
 translator = GoogleTranslator(source='auto', target='zh-CN')  # 翻译器
 chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.4)  # GPT模型
 
