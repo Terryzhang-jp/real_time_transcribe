@@ -15,44 +15,75 @@ class MeetingAnalyzer:
         
     def analyze_meeting(self, text):
         prompt = f"""
-        角色：你是一个专业的会议内容分析专家。请分析以下文本，提取主题和关键论点。
+        角色：你是一个专业的会议内容分析专家。请分析以下文本，提取主题和逻辑结构。
 
         文本内容：
         {text}
 
-        请以JSON格式返回以下内容：
-        1. 主题（main_topic）：提取或总结一个核心主题
-        2. 关键论点（key_points）：提取2-3个主要论点，每个论点可以有1-2个支持性的细节或例子
+        请以JSON格式返回分析结果，要求：
+        1. 主题（topic）：核心主题
+        2. 子节点（children）：可以包含任意数量的子节点，每个子节点可以有：
+           - content: 节点内容
+           - type: 节点类型（"main"主要论点, "detail"细节, "example"例子, "extension"延伸讨论）
+           - children: 该节点的子节点数组（可以继续嵌套）
 
         输出格式：
         {{
-            "main_topic": "主题内容",
-            "key_points": [
+            "topic": "主题内容",
+            "children": [
                 {{
-                    "point": "关键论点1",
-                    "supporting_details": ["支持性细节1", "支持性细节2"]
-                }},
-                {{
-                    "point": "关键论点2",
-                    "supporting_details": ["支持性细节1"]
+                    "content": "主要论点1",
+                    "type": "main",
+                    "children": [
+                        {{
+                            "content": "支持论据1",
+                            "type": "detail",
+                            "children": []
+                        }},
+                        {{
+                            "content": "延伸讨论",
+                            "type": "extension",
+                            "children": [
+                                {{
+                                    "content": "具体例子",
+                                    "type": "example",
+                                    "children": []
+                                }}
+                            ]
+                        }}
+                    ]
                 }}
             ]
         }}
 
         要求：
         1. 保持JSON格式的合法性
-        2. 主题简明扼要
-        3. 关键论点要抓住重点
-        4. 支持性细节要具体
-        5. 直接输出JSON，不要其他说明文字
+        2. 根据内容的逻辑关系自然延伸，不限制层级深度
+        3. 重要的论点可以展开更多层级
+        4. 次要的论点可以较少层级
+        5. 使用不同的节点类型来表达不同的内容性质
         """
         
         try:
-            response = self.llm.predict(prompt)
-            analysis = json.loads(response)
-            return analysis if self._validate_analysis(analysis) else self._get_default_analysis()
+            response = self.llm.invoke(prompt)
+            # 从 AIMessage 中提取内容
+            content = response.content
+            
+            # 移除可能的 markdown 标记
+            if content.startswith('```json'):
+                content = content[7:-3]  # 移除 ```json 和 ```
+                
+            # 解析 JSON
+            analysis = json.loads(content)
+            
+            if self._validate_analysis(analysis):
+                return analysis
+            else:
+                logger.error("Invalid analysis format")
+                return self._get_default_analysis()
+            
         except Exception as e:
-            logger.error(f"Meeting analysis error: {str(e)}")
+            logger.error(f"Analysis error: {str(e)}")
             return self._get_default_analysis()
 
     def _validate_analysis(self, analysis):
@@ -61,30 +92,37 @@ class MeetingAnalyzer:
             if not isinstance(analysis, dict):
                 return False
             
-            if 'main_topic' not in analysis or not analysis['main_topic']:
+            if 'topic' not in analysis or not analysis['topic']:
                 return False
                 
-            if 'key_points' not in analysis or not isinstance(analysis['key_points'], list):
+            if 'children' not in analysis or not isinstance(analysis['children'], list):
                 return False
                 
-            for point in analysis['key_points']:
-                if 'point' not in point or 'supporting_details' not in point:
+            def validate_node(node):
+                if not isinstance(node, dict):
                     return False
-                if not isinstance(point['supporting_details'], list):
+                if 'content' not in node or not node['content']:
                     return False
-                    
-            return True
+                if 'type' not in node or node['type'] not in ['main', 'detail', 'example', 'extension']:
+                    return False
+                if 'children' not in node or not isinstance(node['children'], list):
+                    return False
+                return all(validate_node(child) for child in node['children'])
+                
+            return all(validate_node(child) for child in analysis['children'])
+            
         except Exception:
             return False
 
     def _get_default_analysis(self):
         """返回默认的分析结果"""
         return {
-            "main_topic": "会议进行中",
-            "key_points": [
+            "topic": "会议进行中",
+            "children": [
                 {
-                    "point": "正在收集要点",
-                    "supporting_details": ["等待更多内容..."]
+                    "content": "正在收集要点",
+                    "type": "main",
+                    "children": []
                 }
             ]
         }
@@ -99,75 +137,45 @@ class GraphvizGenerator:
     def generate_graph_instruction(self, analysis):
         """根据分析结果生成图表指令"""
         try:
-            # 生成唯一的节点ID
-            main_id = 'main'
-            nodes = [{
-                'id': main_id,
-                'label': self._format_label(analysis['main_topic']),
-                'style': {
-                    'shape': 'box',
-                    'style': 'filled,rounded',
-                    'fillcolor': 'lightblue',
-                    'fontsize': '14',
-                    'width': '2',
-                    'height': '0.7'
-                }
-            }]
-            
+            nodes = []
             edges = []
             
-            # 为每个关键点创建节点和边
-            for idx, point in enumerate(analysis['key_points']):
-                point_id = f'point_{idx}'
+            # 创建主题节点
+            main_id = 'main'
+            nodes.append({
+                'id': main_id,
+                'label': self._format_label(analysis['topic']),
+                'style': self._get_node_style('root')
+            })
+            
+            def process_node(node, parent_id, node_index, level):
+                """递归处理节点"""
+                current_id = f'node_{level}_{node_index}'
+                
+                # 根据节点类型选择样式
+                style = self._get_node_style(node['type'], level)
+                
+                # 添加节点
                 nodes.append({
-                    'id': point_id,
-                    'label': self._format_label(point['point']),
-                    'style': {
-                        'shape': 'box',
-                        'style': 'filled,rounded',
-                        'fillcolor': 'lightgreen',
-                        'fontsize': '12',
-                        'width': '2'
-                    }
+                    'id': current_id,
+                    'label': self._format_label(node['content']),
+                    'style': style
                 })
                 
-                # 连接主题到关键点
+                # 添加边
                 edges.append({
-                    'from': main_id,
-                    'to': point_id,
-                    'style': {
-                        'color': 'black',
-                        'arrowhead': 'normal',
-                        'penwidth': '1.5'
-                    }
+                    'from': parent_id,
+                    'to': current_id,
+                    'style': self._get_edge_style(node['type'], level)
                 })
                 
-                # 为支持细节创建节点和边
-                for detail_idx, detail in enumerate(point['supporting_details']):
-                    detail_id = f'detail_{idx}_{detail_idx}'
-                    nodes.append({
-                        'id': detail_id,
-                        'label': self._format_label(detail),
-                        'style': {
-                            'shape': 'box',
-                            'style': 'filled,rounded',
-                            'fillcolor': 'white',
-                            'fontsize': '10',
-                            'width': '1.8'
-                        }
-                    })
-                    
-                    # 连接关键点到支持细节
-                    edges.append({
-                        'from': point_id,
-                        'to': detail_id,
-                        'style': {
-                            'color': 'gray',
-                            'arrowhead': 'normal',
-                            'style': 'dashed',
-                            'penwidth': '1.0'
-                        }
-                    })
+                # 递归处理子节点
+                for idx, child in enumerate(node['children']):
+                    process_node(child, current_id, idx, level + 1)
+            
+            # 处理所有子节点
+            for idx, child in enumerate(analysis['children']):
+                process_node(child, main_id, idx, 1)
             
             return {
                 'nodes': nodes,
@@ -176,34 +184,81 @@ class GraphvizGenerator:
                     'rankdir': 'TB',
                     'splines': 'ortho',
                     'nodesep': '0.5',
-                    'ranksep': '0.7'
+                    'ranksep': '0.7',
+                    'fontname': 'Microsoft YaHei',
+                    'concentrate': 'true'
                 }
             }
-            
         except Exception as e:
             logger.error(f"Error generating graph instruction: {str(e)}")
             return None
 
+    def _get_node_style(self, node_type, level=0):
+        """根据节点类型和层级返回样式"""
+        base_style = {
+            'shape': 'box',
+            'style': 'filled,rounded',
+            'fontsize': str(14 - level) if level < 4 else '10'
+        }
+        
+        colors = {
+            'root': 'lightblue',
+            'main': 'lightgreen',
+            'detail': '#E8E8E8',
+            'example': '#FFE4B5',
+            'extension': '#E6E6FA'
+        }
+        
+        base_style['fillcolor'] = colors.get(node_type, 'white')
+        return base_style
+
+    def _get_edge_style(self, node_type, level):
+        """根据节点类型和层级返回边的样式"""
+        base_style = {
+            'color': 'gray' if level > 2 else 'black',
+            'arrowhead': 'normal',
+            'penwidth': str(1.5 - level * 0.2) if level < 3 else '0.8'
+        }
+        
+        if node_type in ['example', 'extension']:
+            base_style['style'] = 'dashed'
+        
+        return base_style
+
     def create_graph_from_instruction(self, instruction):
-        """根据指令创建图表"""
+        """从指令创建图表"""
         try:
             dot = Digraph(comment='Meeting Analysis')
             
-            # 设置图表属性
-            for key, value in instruction['graph_attrs'].items():
-                dot.attr(key=key, value=value)
+            # 正确设置图表属性
+            dot.attr(rankdir='TB')
+            dot.attr(splines='ortho')
+            dot.attr(nodesep='0.5')
+            dot.attr(ranksep='0.7')
+            dot.attr(fontname='Microsoft YaHei')
             
-            # 创建所有节点
-            for node in instruction['nodes']:
-                style = node.get('style', {})
-                dot.node(node['id'], node['label'], **style)
+            # 添加节点和边
+            if instruction.get('nodes'):
+                logger.debug(f"Creating nodes: {instruction.get('nodes', [])}")
+                for node in instruction['nodes']:
+                    # 确保所有样式值都是字符串
+                    style = {k: str(v) for k, v in node.get('style', {}).items()}
+                    dot.node(str(node['id']), str(node['label']), **style)
             
-            # 创建所有边
-            for edge in instruction['edges']:
-                style = edge.get('style', {})
-                dot.edge(edge['from'], edge['to'], '', **style)
+            if instruction.get('edges'):
+                logger.debug(f"Creating edges: {instruction.get('edges', [])}")
+                for edge in instruction['edges']:
+                    # 确保所有样式值都是字符串
+                    style = {k: str(v) for k, v in edge.get('style', {}).items()}
+                    dot.edge(str(edge['from']), str(edge['to']), '', **style)
             
-            return dot
+            # 验证生成的图表
+            try:
+                png_data = dot.pipe(format='png')
+                return dot
+            except Exception as e:
+                logger.error(f"Graph validation failed: {str(e)}")
+                return self._create_default_graph()
             
         except Exception as e:
             logger.error(f"Error creating graph: {str(e)}")
@@ -300,3 +355,21 @@ class GraphvizGenerator:
             self.current_char_count = 0  # 重置计数器
             return True
         return False
+
+    def _create_default_graph(self):
+        """创建默认的图表"""
+        try:
+            dot = Digraph(comment='Default Graph')
+            dot.attr(rankdir='TB')
+            
+            # 创建默认的主节点
+            dot.node('default', '等待分析中...', 
+                    shape='box',
+                    style='filled,rounded',
+                    fillcolor='lightgray',
+                    fontsize='12')
+            
+            return dot
+        except Exception as e:
+            logger.error(f"Error creating default graph: {str(e)}")
+            return None
