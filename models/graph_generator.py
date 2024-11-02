@@ -133,6 +133,7 @@ class GraphvizGenerator:
         self.last_analysis = None
         self.current_char_count = 0
         self.CHAR_THRESHOLD = 150
+        self.font_name = 'Microsoft YaHei'  # 直接使用微软雅黑
 
     def generate_graph_instruction(self, analysis):
         """根据分析结果生成图表指令"""
@@ -230,26 +231,26 @@ class GraphvizGenerator:
         try:
             dot = Digraph(comment='Meeting Analysis')
             
-            # 正确设置图表属性
+            # 设置全局字体为微软雅黑
+            dot.attr(fontname='Microsoft YaHei')
             dot.attr(rankdir='TB')
             dot.attr(splines='ortho')
             dot.attr(nodesep='0.5')
             dot.attr(ranksep='0.7')
-            dot.attr(fontname='Microsoft YaHei')
             
             # 添加节点和边
             if instruction.get('nodes'):
                 logger.debug(f"Creating nodes: {instruction.get('nodes', [])}")
                 for node in instruction['nodes']:
-                    # 确保所有样式值都是字符串
                     style = {k: str(v) for k, v in node.get('style', {}).items()}
+                    style['fontname'] = 'Microsoft YaHei'  # 为每个节点设置字体
                     dot.node(str(node['id']), str(node['label']), **style)
             
             if instruction.get('edges'):
                 logger.debug(f"Creating edges: {instruction.get('edges', [])}")
                 for edge in instruction['edges']:
-                    # 确保所有样式值都是字符串
                     style = {k: str(v) for k, v in edge.get('style', {}).items()}
+                    style['fontname'] = 'Microsoft YaHei'  # 为边的标签设置字体
                     dot.edge(str(edge['from']), str(edge['to']), '', **style)
             
             # 验证生成的图表
@@ -361,13 +362,15 @@ class GraphvizGenerator:
         try:
             dot = Digraph(comment='Default Graph')
             dot.attr(rankdir='TB')
+            dot.attr(fontname='Microsoft YaHei')  # 设置默认图表的字体
             
             # 创建默认的主节点
             dot.node('default', '等待分析中...', 
                     shape='box',
                     style='filled,rounded',
                     fillcolor='lightgray',
-                    fontsize='12')
+                    fontsize='12',
+                    fontname='Microsoft YaHei')  # 设置节点的字体
             
             return dot
         except Exception as e:

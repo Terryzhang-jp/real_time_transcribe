@@ -23,3 +23,5 @@ numpy
 
 # 工具包
 python-dotenv
+
+ctranslate2==4.4.0
