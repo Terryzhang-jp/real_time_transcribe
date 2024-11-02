@@ -207,6 +207,26 @@
             z-index: 1000;
             display: none;
         }
+
+        .status-item {
+            margin-bottom: 10px;
+        }
+
+        .char-progress-bar {
+            width: 100%;
+            height: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        #char-progress {
+            height: 100%;
+            background-color: #2196F3;
+            width: 0%;
+            transition: width 0.3s ease-in-out;
+        }
     </style>
 </head>
 <body>
@@ -239,6 +259,19 @@
         <p id="frequency">主要频率: - Hz</p>
         <p id="continuity">语音连续性: -</p>
         <p id="volume">当前音量: - dB</p>
+        <div class="status-item">
+            <label>当前累积字数：</label>
+            <span id="current-char-count">0</span>
+        </div>
+        <div class="status-item">
+            <label>距离下次更新还需：</label>
+            <span id="chars-until-update">150</span> 个字
+        </div>
+        <div class="status-item">
+            <div class="char-progress-bar">
+                <div id="char-progress" style="width: 0%"></div>
+            </div>
+        </div>
     </div>
 
     <div id="queue-status">
@@ -1024,6 +1057,60 @@
                 console.error('更新状态时出错:', error);
             }
         });
+
+        // 添加字符计数相关变量
+        let currentCharCount = 0;
+        const CHAR_THRESHOLD = 150;  // 与后端保持一致
+
+        // 修改转写结果处理函数
+        socket.on('transcription_result', (data) => {
+            console.log('收到转写结果:', data);
+            
+            if (data.result && data.result.transcription) {
+                // 更新字符计数
+                const newChars = data.result.transcription.length;
+                currentCharCount += newChars;
+                
+                // 计算距离下次更新还需要的字符数
+                const charsUntilUpdate = CHAR_THRESHOLD - (currentCharCount % CHAR_THRESHOLD);
+                
+                // 计算进度百分比
+                const progress = ((currentCharCount % CHAR_THRESHOLD) / CHAR_THRESHOLD * 100).toFixed(1);
+                
+                // 更新显示
+                document.getElementById('current-char-count').textContent = currentCharCount;
+                document.getElementById('chars-until-update').textContent = charsUntilUpdate;
+                document.getElementById('char-progress').style.width = `${progress}%`;
+                
+                // ... 现有的转写结果处理代码 ...
+            }
+        });
+
+        // 在图表更新时重置字符计数器
+        socket.on('graph_update', (data) => {
+            console.log('Received graph update:', data);
+            if (data.image_data) {
+                // 重置当前周期的字符计数
+                currentCharCount = currentCharCount % CHAR_THRESHOLD;
+                
+                // 更新显示
+                const charsUntilUpdate = CHAR_THRESHOLD - currentCharCount;
+                const progress = (currentCharCount / CHAR_THRESHOLD * 100).toFixed(1);
+                
+                document.getElementById('chars-until-update').textContent = charsUntilUpdate;
+                document.getElementById('char-progress').style.width = `${progress}%`;
+            }
+            // ... 现有的图表更新代码 ...
+        });
+
+        // 清除结果时也重置字符计数
+        function clearResults() {
+            currentCharCount = 0;
+            document.getElementById('current-char-count').textContent = '0';
+            document.getElementById('chars-until-update').textContent = CHAR_THRESHOLD;
+            document.getElementById('char-progress').style.width = '0%';
+            // ... 现有的清除代码 ...
+        }
     </script>
 </body>
 </html>
