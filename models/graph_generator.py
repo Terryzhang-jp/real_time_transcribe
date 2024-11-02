@@ -6,6 +6,7 @@ import time
 import logging
 import json
 import copy
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,10 @@ class GraphvizGenerator:
         self.last_analysis = None
         self.current_char_count = 0
         self.CHAR_THRESHOLD = 150
-        self.font_name = 'Microsoft YaHei'  # 直接使用微软雅黑
+        # 使用项目中的字体文件
+        self.font_name = 'YRDZST Semibold'
+        # 获取字体文件的绝对路径
+        self.font_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'YRDZST Semibold.ttf')
 
     def generate_graph_instruction(self, analysis):
         """根据分析结果生成图表指令"""
@@ -231,26 +235,26 @@ class GraphvizGenerator:
         try:
             dot = Digraph(comment='Meeting Analysis')
             
-            # 设置全局字体为微软雅黑
-            dot.attr(fontname='Microsoft YaHei')
-            dot.attr(rankdir='TB')
-            dot.attr(splines='ortho')
-            dot.attr(nodesep='0.5')
-            dot.attr(ranksep='0.7')
+            # 设置全局属���
+            dot.attr(
+                rankdir='TB',
+                splines='ortho',
+                nodesep='0.5',
+                ranksep='0.7',
+                fontname=self.font_name
+            )
             
             # 添加节点和边
             if instruction.get('nodes'):
-                logger.debug(f"Creating nodes: {instruction.get('nodes', [])}")
                 for node in instruction['nodes']:
                     style = {k: str(v) for k, v in node.get('style', {}).items()}
-                    style['fontname'] = 'Microsoft YaHei'  # 为每个节点设置字体
+                    style['fontname'] = self.font_name
                     dot.node(str(node['id']), str(node['label']), **style)
             
             if instruction.get('edges'):
-                logger.debug(f"Creating edges: {instruction.get('edges', [])}")
                 for edge in instruction['edges']:
                     style = {k: str(v) for k, v in edge.get('style', {}).items()}
-                    style['fontname'] = 'Microsoft YaHei'  # 为边的标签设置字体
+                    style['fontname'] = self.font_name
                     dot.edge(str(edge['from']), str(edge['to']), '', **style)
             
             # 验证生成的图表
@@ -293,6 +297,14 @@ class GraphvizGenerator:
     def process_text(self, current_text):
         """处理累积的文本并生成图表"""
         if not current_text.strip():
+            return self._create_default_graph_image()
+            
+        # 添加字符数检查
+        if not self.should_generate_graph(len(current_text)):
+            # 如果没到150字，返回上一次的图表
+            if self.last_analysis:
+                dot = self.create_graph_from_instruction(self.last_analysis)
+                return self.convert_to_base64(dot)
             return self._create_default_graph_image()
             
         try:
@@ -362,7 +374,7 @@ class GraphvizGenerator:
         try:
             dot = Digraph(comment='Default Graph')
             dot.attr(rankdir='TB')
-            dot.attr(fontname='Microsoft YaHei')  # 设置默认图表的字体
+            dot.attr(fontname=self.font_name)
             
             # 创建默认的主节点
             dot.node('default', '等待分析中...', 
@@ -370,7 +382,7 @@ class GraphvizGenerator:
                     style='filled,rounded',
                     fillcolor='lightgray',
                     fontsize='12',
-                    fontname='Microsoft YaHei')  # 设置节点的字体
+                    fontname=self.font_name)
             
             return dot
         except Exception as e:
