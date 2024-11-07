@@ -187,6 +187,7 @@ socket.on('processing_status', handleProcessingStatus);
 socket.on('processing_error', handleProcessingError);
 socket.on('graph_update', handleGraphUpdate);
 socket.on('connection_status', handleConnectionStatus);
+socket.on('timeline_update', handleTimelineUpdate);
 
 // Utility Functions
 function updateConnectionStatus(status) {
@@ -257,6 +258,7 @@ function clearResults() {
     document.getElementById('chars-until-update').textContent = CHAR_THRESHOLD;
     document.getElementById('char-progress').style.width = '0%';
     console.log('Cleared all results');
+    clearTimeline();
 }
 
 // Audio Processing Functions (continued)
@@ -515,8 +517,156 @@ setInterval(() => {
     }
 }, 30000);
 
-// Initialize the application
+// Time Axis Handler
+function handleTimelineUpdate(data) {
+    const timelineContainer = document.getElementById('meeting-timeline');
+    const currentPhaseElement = document.getElementById('current-phase');
+    const totalSegmentsElement = document.getElementById('total-segments');
+    
+    // 更新统计信息
+    currentPhaseElement.textContent = data.timeline.current_phase || '-';
+    totalSegmentsElement.textContent = data.stats.total_segments;
+    
+    // 清空现有内容
+    timelineContainer.innerHTML = '';
+    
+    // 添加时间轴段落
+    data.timeline.segments.forEach((segment, index) => {
+        const segmentElement = createTimelineSegment(segment, index === data.timeline.segments.length - 1);
+        timelineContainer.appendChild(segmentElement);
+    });
+    
+    // 滚动到最新内容
+    timelineContainer.scrollTop = timelineContainer.scrollHeight;
+}
+
+function createTimelineSegment(segment, isActive) {
+    const segmentDiv = document.createElement('div');
+    segmentDiv.className = `timeline-segment ${isActive ? 'active' : ''}`;
+    
+    segmentDiv.innerHTML = `
+        <div class="timeline-time">
+            ${segment.timestamp.start} - ${segment.timestamp.end}
+        </div>
+        <div class="timeline-phase">
+            ${segment.phase}
+        </div>
+        <div class="timeline-content">
+            <div class="timeline-main-point">
+                ${segment.content.main_point}
+            </div>
+            <ul class="timeline-details">
+                ${segment.content.details.map(detail => `
+                    <li>${detail}</li>
+                `).join('')}
+            </ul>
+        </div>
+    `;
+    
+    return segmentDiv;
+}
+
+function clearTimeline() {
+    const timelineContainer = document.getElementById('meeting-timeline');
+    timelineContainer.innerHTML = '';
+    document.getElementById('current-phase').textContent = '-';
+    document.getElementById('total-segments').textContent = '0';
+}
+
+// Socket event listeners
+socket.on('timeline_update', function(data) {
+    console.log('Received timeline update:', data);
+    if (data && data.timeline) {
+        console.log('Timeline data:', data.timeline);
+        if (Array.isArray(data.timeline.segments)) {
+            updateTimelineUI(data.timeline);
+            if (data.stats) {
+                updateTimelineStats(data.stats);
+            }
+        } else {
+            console.error('Invalid timeline segments format:', data.timeline);
+        }
+    } else {
+        console.error('Invalid timeline data received:', data);
+    }
+});
+
+// Timeline UI update functions
+function updateTimelineUI(timeline) {
+    const timelineContainer = document.getElementById('meeting-timeline');
+    if (!timelineContainer) {
+        console.error('Timeline container not found');
+        return;
+    }
+
+    console.log('Updating timeline with segments:', timeline.segments);
+    
+    // 清空现有内容
+    timelineContainer.innerHTML = '';
+    
+    // 添加新的时间轴段落
+    timeline.segments.forEach((segment, index) => {
+        const segmentDiv = createTimelineSegment(segment, index === timeline.segments.length - 1);
+        timelineContainer.appendChild(segmentDiv);
+    });
+    
+    // 滚动到最新内容
+    timelineContainer.scrollTop = timelineContainer.scrollHeight;
+}
+
+function updateTimelineStats(stats) {
+    console.log('Updating timeline stats:', stats);
+    if (stats) {
+        document.getElementById('current-phase').textContent = stats.current_phase || '-';
+        document.getElementById('total-segments').textContent = stats.total_segments || '0';
+    }
+}
+
+function createTimelineSegment(segment, isActive) {
+    const segmentDiv = document.createElement('div');
+    segmentDiv.className = `timeline-segment ${isActive ? 'active' : ''}`;
+    
+    segmentDiv.innerHTML = `
+        <div class="timeline-time">
+            ${segment.start_time} - ${segment.end_time}
+        </div>
+        <div class="timeline-phase">
+            ${segment.phase}
+        </div>
+        <div class="timeline-content">
+            <div class="timeline-main-point">
+                ${segment.main_point}
+            </div>
+            <ul class="timeline-details">
+                ${segment.details.map(detail => `
+                    <li>${detail}</li>
+                `).join('')}
+            </ul>
+            div class="timeline-raw-text">
+                <details>
+                    <summary>原始文本</summary>
+                    <div class="raw-text-content">
+                        ${segment.raw_text}
+                    </div>
+                </details>
+            </div>
+        </div>
+    `;
+    
+    return segmentDiv;
+}
+// 初始化
 document.addEventListener('DOMContentLoaded', () => {
     initializeCanvasSizes();
     setupEventListeners();
+    
+    // 清空时间轴
+    const timelineContainer = document.getElementById('meeting-timeline');
+    if (timelineContainer) {
+        timelineContainer.innerHTML = '';
+    }
+    
+    // 重置统计信息
+    document.getElementById('current-phase').textContent = '-';
+    document.getElementById('total-segments').textContent = '0';
 });

@@ -17,6 +17,7 @@ import threading
 from queue import Queue  # 线程安全的队列
 import torch
 from typing import Dict, Any
+from models.timeline_analyzer import TimelineAnalyzer
 
 # 初始化日志配置
 logging.basicConfig(level=logging.DEBUG)
@@ -70,9 +71,9 @@ class AudioQueueProcessor:
             'is_recording': True  # 新增录音状态标志
         }
 
-        # 结果相关变量
+        # 结果相变量
         self.current_result = None  # 当前处理结果
-        self.has_new_result = False  # 是否有新结��
+        self.has_new_result = False  # 是否有新结果
         self.last_emit_time = time.time()  # 上次发送结果时间
         self.emit_interval = 0.1  # 发送间隔时间
 
@@ -104,6 +105,13 @@ class AudioQueueProcessor:
         
         # 初始化 chat model
         self.chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.4)
+
+        # 添加时间轴分析器
+        self.timeline_analyzer = TimelineAnalyzer()
+        self.current_segment_text = ""
+        self.current_segment_start_time = None
+        logger.info("TimelineAnalyzer initialized")
+        self.current_segment_text = ""
 
     def _emit_results(self, force=False):
         """
@@ -236,7 +244,35 @@ class AudioQueueProcessor:
                     # 更新当前会话文本
                     self.current_session_text += new_transcription
                     self.last_segment_text = new_transcription.strip()
-
+                    
+                    # 记录段落开始时间
+                    if self.current_segment_start_time is None:
+                        self.current_segment_start_time = metadata['timestamp']
+                        logger.debug(f"Starting new segment at {self.current_segment_start_time}")
+                    
+                    # 累积当前段落文本
+                    self.current_segment_text += new_transcription
+                    logger.debug(f"Current segment length: {len(self.current_segment_text)}")
+                    
+                    # 检查是否需要进行时间轴分析
+                    if hasattr(self, 'timeline_analyzer') and self.timeline_analyzer.should_analyze(len(new_transcription)):
+                        logger.info("Triggering timeline analysis")
+                        try:
+                            analysis = self.timeline_analyzer.analyze_segment(
+                                text=self.current_segment_text,
+                                start_time=self._format_timestamp(self.current_segment_start_time),
+                                end_time=self._format_timestamp(time.time())
+                            )
+                            
+                            # 发送时间轴更新
+                            self._emit_timeline_update()
+                            
+                            # 重置段落
+                            self.current_segment_text = ""
+                            self.current_segment_start_time = None
+                        except Exception as e:
+                            logger.error(f"Timeline analysis error: {str(e)}", exc_info=True)
+                    
                     # 翻译新的部分
                     translation = translator.translate(self.last_segment_text)
 
@@ -372,13 +408,16 @@ class AudioQueueProcessor:
 
     def clear_session(self):
         """
-        清除当前会话的所有内容
+        清当前会话的所有内容
         重置所有会话相关的变量
         """
         self.processed_segments.clear()
         self.current_session_text = ""
         self.current_result = None
         self.last_transcription = ""
+        self.timeline_analyzer.clear_timeline()
+        self.current_segment_start_time = None
+        self.current_segment_text = ""
 
     def process_transcription_result(self, text):
         """处理转写结果"""
@@ -403,6 +442,36 @@ class AudioQueueProcessor:
                     'error': str(e)
                 })
 
+    def _process_audio(self, audio_item):
+        """处理单个音频项"""
+        try:
+            # 获取转写结果
+            result = self._transcribe_audio(audio_item['audio_data'], audio_item['metadata'])
+            return result
+        except Exception as e:
+            logger.error(f"Error processing audio: {str(e)}", exc_info=True)
+            return None
+            
+    def _emit_timeline_update(self):
+        """发送时间轴更新事件"""
+        try:
+            timeline_data = self.timeline_analyzer.get_timeline()
+            stats = self.timeline_analyzer.get_analysis_stats()
+            
+            logger.info(f"Emitting timeline update with {len(timeline_data.get('segments', []))} segments")
+            
+            with app.app_context():
+                socketio.emit('timeline_update', {
+                    'timeline': timeline_data,
+                    'stats': stats
+                })
+        except Exception as e:
+            logger.error(f"Error in _emit_timeline_update: {str(e)}", exc_info=True)
+            
+    def _format_timestamp(self, timestamp):
+        """格式化时间戳"""
+        return time.strftime('%H:%M:%S', time.localtime(timestamp))
+
 # 初始化Flask应用和配置
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
@@ -413,7 +482,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 # 初始化必要的模型和工具
 device_info = get_device_info()
 
-# 简化模型初始化
+# 简化模初始化
 if device_info['device'] == 'cuda':
     model = WhisperModel("medium", device="cuda", compute_type="float16")
 else:
@@ -493,6 +562,16 @@ def handle_connect():
             'device_name': device_info['device_name']
         }
     })
+    
+    # 发送当前时间轴状态（如果有）
+    if hasattr(audio_processor, 'timeline_analyzer'):
+        timeline_data = audio_processor.timeline_analyzer.get_timeline()
+        stats = audio_processor.timeline_analyzer.get_analysis_stats()
+        emit('timeline_update', {
+            'timeline': timeline_data,
+            'stats': stats,
+            'status': audio_processor.get_status()
+        })
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -501,8 +580,24 @@ def handle_disconnect():
 
 @socketio.on('result_received')
 def handle_result_received(data):
-    """处理客户端结果接收确认"""
+    """处理客���端结果接收确认"""
     logger.info(f"Client acknowledged result receipt: {data}")
+
+@socketio.on('timeline_request')
+def handle_timeline_request():
+    """处理时间轴数据请求"""
+    try:
+        timeline_data = audio_processor.timeline_analyzer.get_timeline()
+        stats = audio_processor.timeline_analyzer.get_analysis_stats()
+        
+        emit('timeline_update', {
+            'timeline': timeline_data,
+            'stats': stats,
+            'status': audio_processor.get_status()
+        })
+    except Exception as e:
+        logger.error(f"Error handling timeline request: {str(e)}", exc_info=True)
+        emit('processing_error', {'error': str(e)})
 
 # 静态文件服务
 @app.route('/static/<path:filename>')
@@ -520,6 +615,16 @@ def handle_ping():
 def handle_stop_recording():
     audio_processor.processing_status['is_recording'] = False
     logger.info("Recording stopped, continuing to process remaining queue")
+
+@app.route('/clear', methods=['POST'])
+def clear_session():
+    """清除当前会话数据"""
+    try:
+        audio_processor.clear_session()
+        return jsonify({'status': 'success', 'message': '会话已清除'})
+    except Exception as e:
+        logger.error(f"Error clearing session: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 # 主程序入口
 if __name__ == '__main__':
