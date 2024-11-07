@@ -35,6 +35,7 @@ const startButton = document.getElementById('startButton');
 const stopButton = document.getElementById('stopButton');
 const clearButton = document.getElementById('clearButton');
 const languageSelect = document.getElementById('languageSelect');
+const gptLanguageSelect = document.getElementById('gptLanguageSelect');
 const status = document.getElementById('status');
 const frequencyDisplay = document.getElementById('frequency');
 const continuityDisplay = document.getElementById('continuity');
@@ -165,6 +166,10 @@ function detectSound() {
 socket.on('connect', () => {
     console.log('Socket connected with ID:', socket.id);
     updateConnectionStatus('已连接');
+    socket.emit('start_stream', {
+        language: languageSelect.value,
+        gpt_language: gptLanguageSelect.value
+    });
 });
 
 socket.on('disconnect', (reason) => {
@@ -272,6 +277,7 @@ function sendAudioToServer() {
     const formData = new FormData();
     formData.append('audio', audioBlob);
     formData.append('language', selectedLanguage);
+    formData.append('gpt_language', document.getElementById('gptLanguageSelect').value);
 
     fetch('/transcribe', {
         method: 'POST',

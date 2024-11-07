@@ -72,7 +72,7 @@ class AudioQueueProcessor:
 
         # 结果相关变量
         self.current_result = None  # 当前处理结果
-        self.has_new_result = False  # 是否有新结果
+        self.has_new_result = False  # 是否有新结��
         self.last_emit_time = time.time()  # 上次发送结果时间
         self.emit_interval = 0.1  # 发送间隔时间
 
@@ -94,6 +94,16 @@ class AudioQueueProcessor:
         # 现有的初始化代码...
         self.device_info = get_device_info()
         logger.info(f"Using device: {self.device_info['device_info']}")
+
+        # 添加语言提示模板
+        self.language_prompts = {
+            'zh': '中文',
+            'en': 'English',
+            'ja': '日本語で'
+        }
+        
+        # 初始化 chat model
+        self.chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.4)
 
     def _emit_results(self, force=False):
         """
@@ -230,11 +240,28 @@ class AudioQueueProcessor:
                     # 翻译新的部分
                     translation = translator.translate(self.last_segment_text)
 
-                    # 使用GPT-4修正完整的转写内容
-                    with app.app_context():
-                        corrected_text = chain.invoke({
-                            "text": self.current_session_text.strip()
-                        })
+                    # 获取语言设置
+                    gpt_language = metadata.get('gpt_language', 'zh')
+                    language_prompt = self.language_prompts.get(gpt_language, self.language_prompts['zh'])
+                    
+                    prompt = ChatPromptTemplate.from_template(
+                    """请分析并修正以下完整对话内容的语法和专业词汇，保持对话的连贯性：
+
+                    {text}
+
+                    请使用{language_prompt}输出 修正后的完整内容 只输出修正后的内容：
+                    
+                    """
+                    )
+                    
+                    # 创建处理链
+                    chain = prompt | self.chat_model | StrOutputParser()
+                    
+                    # 调用 GPT
+                    corrected_text = chain.invoke({
+                        "text": self.current_session_text.strip(),
+                        "language_prompt": language_prompt
+                    })
 
                     # 生成并发送图表更新
                     if graph_generator.should_generate_graph(len(new_transcription)):
@@ -392,18 +419,8 @@ if device_info['device'] == 'cuda':
 else:
     model = WhisperModel("medium", device="cpu", compute_type="int8")
 translator = GoogleTranslator(source='auto', target='zh-CN')  # 翻译器
-chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.4)  # GPT模型
+chat_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.2)  # GPT模型
 
-# 设置文本修正提示模板
-prompt = ChatPromptTemplate.from_template(
-"""请析并修正以完整对话内容的语法和专业词汇，保持对话的连贯性：
-
-{text}
-
-修正后的完整内容："""
-)
-# 创建处理链
-chain = prompt | chat_model | StrOutputParser()
 
 # 设置图表存储目录
 CHART_DIR = os.path.join(app.root_path, 'static', 'charts')
@@ -431,15 +448,18 @@ def transcribe():
         audio_file = request.files['audio']
         audio_data = audio_file.read()
         language = request.form.get('language', 'zh')
+        gpt_language = request.form.get('gpt_language', 'zh')
 
         logger.debug(f"Received audio data size: {len(audio_data)} bytes")
         logger.debug(f"Language setting: {language}")
+        logger.debug(f"GPT language setting: {gpt_language}")
 
         # 准备音频数据
         audio_item = {
             'audio_data': audio_data,
             'metadata': {
                 'language': language,
+                'gpt_language': gpt_language,
                 'timestamp': time.time()
             }
         }
