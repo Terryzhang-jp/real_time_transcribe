@@ -47,7 +47,7 @@ class TimelineAnalyzer:
             3. details: 包含具体的要点和展开内容的数组
             4. continuation: 与上一阶段的关系（是否继续上一个话题，或开启新话题）
 
-            仅返回JSON格式的结果。
+            仅返回JSON格式的结果， 并且输出使用英语。
             """
         )
 
@@ -100,7 +100,7 @@ class TimelineAnalyzer:
             "continuation": "与上一阶段的关系"
         }}
         
-        只返回JSON格式的结果，不要添加其他说明文字。
+        只返回JSON格式的结果，不要添加其他说明文字, 并且输出使用英语。
         """
         
         try:

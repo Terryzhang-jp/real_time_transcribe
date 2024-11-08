@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>实时语音转写和翻译</title>
+    <title>Real-time Speech Transcription and Translation</title>
     <link rel="stylesheet" href="../static/css/styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
     <div id="connection-status">
-        连接状态: <span id="connection-status-text">未连接</span>
+        Connection Status: <span id="connection-status-text">Not Connected</span>
     </div>
 
     <div class="debug-panel" id="debug-panel">
@@ -17,38 +17,38 @@
         <pre id="debug-info"></pre>
     </div>
 
-    <h1>实时语音转写和翻译</h1>
+    <h1>Real-time Speech Transcription and Translation</h1>
 
     <div class="control-panel">
         <select id="languageSelect">
-            <option value="">请选择语言</option>
-            <option value="zh">中文</option>
-            <option value="en">英语</option>
-            <option value="ja">日语</option>
+            <option value="">Select Language</option>
+            <option value="zh">Chinese</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
         </select>
         <select id="gptLanguageSelect">
-            <option value="">GPT修正语言</option>
-            <option value="zh">中文</option>
-            <option value="en">英语</option>
-            <option value="ja">日语</option>
+            <option value="">GPT Correction Language</option>
+            <option value="zh">Chinese</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
         </select>
-        <button id="startButton" disabled>开始</button>
-        <button id="stopButton" disabled>停止</button>
-        <button id="clearButton">清除结果</button>
+        <button id="startButton" disabled>Start</button>
+        <button id="stopButton" disabled>Stop</button>
+        <button id="clearButton">Clear Results</button>
     </div>
 
     <div class="status-panel">
-        <p id="status">未检测到人声</p>
-        <p id="frequency">主要频率: - Hz</p>
-        <p id="continuity">语音连续性: -</p>
-        <p id="volume">当前音量: - dB</p>
+        <p id="status">No Voice Detected</p>
+        <p id="frequency">Main Frequency: - Hz</p>
+        <p id="continuity">Voice Continuity: -</p>
+        <p id="volume">Current Volume: - dB</p>
         <div class="status-item">
-            <label>当前累积字数：</label>
+            <label>Current Character Count:</label>
             <span id="current-char-count">0</span>
         </div>
         <div class="status-item">
-            <label>距离下次更新还需：</label>
-            <span id="chars-until-update">150</span> 个字
+            <label>Characters Until Next Update:</label>
+            <span id="chars-until-update">150</span> characters
         </div>
         <div class="status-item">
             <div class="char-progress-bar">
@@ -58,10 +58,10 @@
     </div>
 
     <div id="queue-status">
-        <h3>处理状态</h3>
-        <p>当前处理：<span id="current-processing">无</span></p>
-        <p>等待处理：<span id="queue-size">0</span> 个片段</p>
-        <p>已处理总数：<span id="total-processed">0</span> 个片段</p>
+        <h3>Processing Status</h3>
+        <p>Currently Processing: <span id="current-processing">None</span></p>
+        <p>Waiting in Queue: <span id="queue-size">0</span> segments</p>
+        <p>Total Processed: <span id="total-processed">0</span> segments</p>
         <div class="progress-container">
             <div class="progress-bar">
                 <div id="process-progress"></div>
@@ -71,53 +71,53 @@
     </div>
 
     <div class="visualizer-container">
-        <h2>声音可视化</h2>
+        <h2>Sound Visualization</h2>
         <canvas id="frequencyVisualizer"></canvas>
         <canvas id="continuityVisualizer"></canvas>
         <canvas id="volumeVisualizer"></canvas>
     </div>
 
     <div class="result-container">
-        <h2>转写结果：</h2>
+        <h2>Transcription Results:</h2>
         <div id="transcription" class="transcription"></div>
 
-        <h2>翻译结果（中文）：</h2>
+        <h2>Translation Results (Chinese):</h2>
         <div id="translation" class="translation"></div>
 
-        <h2>GPT-4 修正结果：</h2>
+        <h2>GPT-4 Corrected Results:</h2>
         <div id="corrected-text" class="transcription"></div>
     </div>
 
     <div id="graph-container">
-        <h2>实时逻辑流程图：</h2>
-        <img id="logic-graph" src="" alt="逻辑流程图" style="display: none;">
-        <div id="graph-status">等待语音输入...</div>
+        <h2>Real-time Logic Flow Chart:</h2>
+        <img id="logic-graph" src="" alt="Logic Flow Chart" style="display: none;">
+        <div id="graph-status">Waiting for voice input...</div>
         <div id="graph-details">
-            上次更新: <span id="last-update-time">从未更新</span><br>
-            当前状态: <span id="current-status">初始化</span><br>
-            错误信息: <span id="error-message-graph"></span>
+            Last Update: <span id="last-update-time">Never Updated</span><br>
+            Current Status: <span id="current-status">Initializing</span><br>
+            Error Message: <span id="error-message-graph"></span>
         </div>
     </div>
 
     <div class="status-container">
         <div id="deviceInfo" class="status-item">
-            <label>计算设备:</label>
-            <span class="device-status">正在检测...</span>
+            <label>Computing Device:</label>
+            <span class="device-status">Detecting...</span>
         </div>
         <div id="modelInfo" class="status-item">
-            <label>模型配置:</label>
-            <span class="model-status">正在加载...</span>
+            <label>Model Configuration:</label>
+            <span class="model-status">Loading...</span>
         </div>
     </div>
 
     <div class="timeline-container">
-        <h2>会议时间轴</h2>
+        <h2>Meeting Timeline</h2>
         <div id="meeting-timeline" class="timeline">
-            <!-- 时间轴内容将通过 JavaScript 动态添加 -->
+            <!-- Timeline content will be added dynamically through JavaScript -->
         </div>
         <div class="timeline-stats">
-            <span>当前阶段: <span id="current-phase">-</span></span>
-            <span>已记录片段: <span id="total-segments">0</span></span>
+            <span>Current Phase: <span id="current-phase">-</span></span>
+            <span>Recorded Segments: <span id="total-segments">0</span></span>
         </div>
     </div>
 

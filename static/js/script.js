@@ -642,7 +642,7 @@ function createTimelineSegment(segment, isActive) {
                     <li>${detail}</li>
                 `).join('')}
             </ul>
-            div class="timeline-raw-text">
+            <div class="timeline-raw-text">
                 <details>
                     <summary>原始文本</summary>
                     <div class="raw-text-content">
